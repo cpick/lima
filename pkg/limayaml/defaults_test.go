@@ -85,6 +85,7 @@ func TestFillDefault(t *testing.T) {
 		},
 		SSH: SSH{
 			LocalPort:         ptr.Of(0),
+			LaunchdSocketName: ptr.Of(""),
 			LoadDotSSHPubKeys: ptr.Of(false),
 			ForwardAgent:      ptr.Of(false),
 			ForwardX11:        ptr.Of(false),
@@ -344,6 +345,7 @@ func TestFillDefault(t *testing.T) {
 		},
 		SSH: SSH{
 			LocalPort:         ptr.Of(888),
+			LaunchdSocketName: ptr.Of("Listener"),
 			LoadDotSSHPubKeys: ptr.Of(false),
 			ForwardAgent:      ptr.Of(true),
 			ForwardX11:        ptr.Of(false),
@@ -559,6 +561,7 @@ func TestFillDefault(t *testing.T) {
 		},
 		SSH: SSH{
 			LocalPort:         ptr.Of(4433),
+			LaunchdSocketName: ptr.Of("Sock"),
 			LoadDotSSHPubKeys: ptr.Of(true),
 			ForwardAgent:      ptr.Of(true),
 			ForwardX11:        ptr.Of(false),

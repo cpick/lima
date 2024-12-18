@@ -167,7 +167,8 @@ type Virtiofs struct {
 }
 
 type SSH struct {
-	LocalPort *int `yaml:"localPort,omitempty" json:"localPort,omitempty" jsonschema:"nullable"`
+	LocalPort         *int    `yaml:"localPort,omitempty" json:"localPort,omitempty" jsonschema:"nullable"`
+	LaunchdSocketName *string `yaml:"launchdSocketName,omitempty" json:"launchdSocketName,omitempty" jsonschema:"nullable"`
 
 	// LoadDotSSHPubKeys loads ~/.ssh/*.pub in addition to $LIMA_HOME/_config/user.pub .
 	LoadDotSSHPubKeys *bool `yaml:"loadDotSSHPubKeys,omitempty" json:"loadDotSSHPubKeys,omitempty" jsonschema:"nullable"` // default: false

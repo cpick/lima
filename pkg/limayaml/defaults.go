@@ -408,6 +408,17 @@ func FillDefault(y, d, o *LimaYAML, filePath string, warn bool) {
 		// y.SSH.LocalPort value is not filled here (filled by the hostagent)
 		y.SSH.LocalPort = ptr.Of(0)
 	}
+
+	if y.SSH.LaunchdSocketName == nil {
+		y.SSH.LaunchdSocketName = d.SSH.LaunchdSocketName
+	}
+	if o.SSH.LaunchdSocketName != nil {
+		y.SSH.LaunchdSocketName = o.SSH.LaunchdSocketName
+	}
+	if y.SSH.LaunchdSocketName == nil {
+		y.SSH.LaunchdSocketName = ptr.Of("")
+	}
+
 	if y.SSH.LoadDotSSHPubKeys == nil {
 		y.SSH.LoadDotSSHPubKeys = d.SSH.LoadDotSSHPubKeys
 	}

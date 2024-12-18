@@ -147,6 +147,11 @@ ssh:
   # NOTE: when the instance name is "default", the builtin default value is set to
   # 60022 for backward compatibility.
   localPort: null
+  # A Darwin (macOS) launchd socket name. Enables socket activation to start VM on demand.
+  # Must match a key in the <Sockets> dictionary in a LaunchAgent or LaunchDaemon's plist.
+  # See `man launchd.plist`.
+  # 🟢 Builtin default: "" (socket-activation disabled)
+  launchdSocketName: null
   # Load ~/.ssh/*.pub in addition to $LIMA_HOME/_config/user.pub .
   # This option is useful when you want to use other SSH-based
   # applications such as rsync with the Lima instance.
