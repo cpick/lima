@@ -9,6 +9,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/apparentlymart/go-cidr v1.1.0
 	github.com/balajiv113/fd v0.0.0-20230330094840-143eec500f3e
+	github.com/bored-engineer/go-launchd v0.0.0-20241220214420-b514778f4f80
 	github.com/cheggaaa/pb/v3 v3.1.5
 	github.com/containerd/containerd v1.7.24
 	github.com/containerd/continuity v0.4.5
@@ -140,3 +141,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
+
+replace github.com/containers/gvisor-tap-vsock => github.com/cpick/gvisor-tap-vsock v0.0.0-20241221210737-111901fedac7

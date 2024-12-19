@@ -62,6 +62,8 @@ func StartGVisorNetstack(ctx context.Context, gVisorOpts *GVisorNetstackOpts) er
 	// Comparing this with QEMU SLIRP,
 	// - DNS is equivalent to GatewayIP
 	// - GatewayIP is equivalent to NAT configuration
+	forwardProtocols := types.DefaultTransportProtocols()
+	forwardProtocols[types.TCPFD] = struct{}{}
 	config := types.Configuration{
 		Debug:             false,
 		MTU:               opts.MTU,
@@ -70,6 +72,7 @@ func StartGVisorNetstack(ctx context.Context, gVisorOpts *GVisorNetstackOpts) er
 		GatewayMacAddress: gatewayMacAddr,
 		DHCPStaticLeases:  leases,
 		Forwards:          map[string]string{},
+		ForwardProtocols:  forwardProtocols,
 		DNS:               []types.Zone{},
 		DNSSearchDomains:  searchDomains(),
 		NAT: map[string]string{

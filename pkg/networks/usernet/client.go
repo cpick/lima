@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
+	launchd "github.com/bored-engineer/go-launchd"
 	gvproxyclient "github.com/containers/gvisor-tap-vsock/pkg/client"
 	"github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/lima-vm/lima/pkg/driver"
@@ -22,10 +24,11 @@ import (
 type Client struct {
 	Directory string
 
-	client   *http.Client
-	delegate *gvproxyclient.Client
-	base     string
-	subnet   net.IP
+	client         *http.Client
+	delegate       *gvproxyclient.Client
+	base           string
+	subnet         net.IP
+	sshUnexposable bool
 }
 
 func (c *Client) ConfigureDriver(ctx context.Context, driver *driver.BaseDriver) error {
@@ -34,9 +37,16 @@ func (c *Client) ConfigureDriver(ctx context.Context, driver *driver.BaseDriver)
 	if err != nil {
 		return err
 	}
-	err = c.ResolveAndForwardSSH(ipAddress, driver.SSHLocalPort)
-	if err != nil {
-		return err
+	if *driver.Instance.Config.SSH.LaunchdSocketName != "" {
+		err = c.forwardLaunchdToSSH(ipAddress, *driver.Instance.Config.SSH.LaunchdSocketName)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = c.ResolveAndForwardSSH(ipAddress, driver.SSHLocalPort)
+		if err != nil {
+			return err
+		}
 	}
 	hosts := driver.Instance.Config.HostResolver.Hosts
 	hosts[fmt.Sprintf("%s.internal", driver.Instance.Hostname)] = ipAddress
@@ -45,6 +55,9 @@ func (c *Client) ConfigureDriver(ctx context.Context, driver *driver.BaseDriver)
 }
 
 func (c *Client) UnExposeSSH(sshPort int) error {
+	if !c.sshUnexposable {
+		return nil
+	}
 	return c.delegate.Unexpose(&types.UnexposeRequest{
 		Local:    fmt.Sprintf("127.0.0.1:%d", sshPort),
 		Protocol: "tcp",
@@ -72,6 +85,53 @@ func (c *Client) ResolveAndForwardSSH(ipAddr string, sshPort int) error {
 	if err != nil {
 		return err
 	}
+
+	c.sshUnexposable = true
+	return nil
+}
+
+func (c *Client) forwardLaunchdToSSH(ipAddr string, sshLaunchdSocketName string) error {
+	remote := net.JoinHostPort(ipAddr, "22")
+
+	l, err := launchd.Activate(sshLaunchdSocketName)
+	if err != nil {
+		return fmt.Errorf("launchd socket %q failed to activate: %w", sshLaunchdSocketName, err)
+	}
+	defer l.Close()
+
+	tl, ok := l.(*net.TCPListener)
+	if !ok {
+		return fmt.Errorf("launchd socket %q not TCP listener", sshLaunchdSocketName)
+	}
+
+	rc, err := tl.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("launchd socket %q failed to get raw connection: %w", sshLaunchdSocketName, err)
+	}
+
+	var innerErr error
+	if err := rc.Control(func(fd uintptr) {
+		if fd > math.MaxInt {
+			innerErr = fmt.Errorf("invalid fd: %v", fd)
+			return
+		}
+		local := strconv.Itoa(int(fd))
+
+		if err := c.delegate.Expose(&types.ExposeRequest{
+			Local:    local,
+			Remote:   remote,
+			Protocol: types.TCPFD,
+		}); err != nil {
+			innerErr = fmt.Errorf("exposing fd: %v failed: %w", fd, err)
+			return
+		}
+	}); err != nil {
+		return fmt.Errorf("launchd socket %q failed to control raw connection: %w", sshLaunchdSocketName, err)
+	}
+	if innerErr != nil {
+		return fmt.Errorf("launchd socket %q: %w", sshLaunchdSocketName, innerErr)
+	}
+
 	return nil
 }
 

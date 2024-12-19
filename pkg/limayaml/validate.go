@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode"
 
+	launchd "github.com/bored-engineer/go-launchd"
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/lima-vm/lima/pkg/localpathutil"
@@ -171,6 +172,11 @@ func Validate(y *LimaYAML, warn bool) error {
 		if err := validatePort("ssh.localPort", *y.SSH.LocalPort); err != nil {
 			return err
 		}
+	}
+
+	if *y.SSH.LaunchdSocketName != "" && !launchd.Supported {
+		return fmt.Errorf("field `ssh.launchdSocketName` non-empty: %q on platform without launchd support", *y.SSH.LaunchdSocketName)
+
 	}
 
 	switch *y.MountType {
