@@ -90,23 +90,17 @@ func (c *Client) ResolveAndForwardSSH(ipAddr string, sshPort int) error {
 	return nil
 }
 
-func (c *Client) forwardLaunchdToSSH(ipAddr string, sshLaunchdSocketName string) error {
-	remote := net.JoinHostPort(ipAddr, "22")
-
-	l, err := launchd.Activate(sshLaunchdSocketName)
-	if err != nil {
-		return fmt.Errorf("launchd socket %q failed to activate: %w", sshLaunchdSocketName, err)
-	}
+func (c *Client) forwardListenerToSSH(remote string, l net.Listener) error {
 	defer l.Close()
 
 	tl, ok := l.(*net.TCPListener)
 	if !ok {
-		return fmt.Errorf("launchd socket %q not TCP listener", sshLaunchdSocketName)
+		return errors.New("not TCP listener")
 	}
 
 	rc, err := tl.SyscallConn()
 	if err != nil {
-		return fmt.Errorf("launchd socket %q failed to get raw connection: %w", sshLaunchdSocketName, err)
+		return fmt.Errorf("failed to get raw connection: %w", err)
 	}
 
 	var innerErr error
@@ -126,10 +120,24 @@ func (c *Client) forwardLaunchdToSSH(ipAddr string, sshLaunchdSocketName string)
 			return
 		}
 	}); err != nil {
-		return fmt.Errorf("launchd socket %q failed to control raw connection: %w", sshLaunchdSocketName, err)
+		return fmt.Errorf("failed to control raw connection: %w", err)
 	}
 	if innerErr != nil {
-		return fmt.Errorf("launchd socket %q: %w", sshLaunchdSocketName, innerErr)
+		return innerErr
+	}
+
+	return nil
+}
+
+func (c *Client) forwardLaunchdToSSH(ipAddr string, sshLaunchdSocketName string) error {
+	remote := net.JoinHostPort(ipAddr, "22")
+
+	l, err := launchd.Activate(sshLaunchdSocketName)
+	if err != nil {
+		return fmt.Errorf("launchd socket %q failed to activate: %w", sshLaunchdSocketName, err)
+	}
+	if err := c.forwardListenerToSSH(remote, l); err != nil {
+		return fmt.Errorf("forwarding launchd socket %q to SSH failed: %w", sshLaunchdSocketName, err)
 	}
 
 	return nil
