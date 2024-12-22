@@ -297,9 +297,8 @@ func (l *LimaQemuDriver) shutdownQEMU(ctx context.Context, timeout time.Duration
 	logrus.Info("Shutting down QEMU with the power button")
 	if usernetIndex := limayaml.FirstUsernetIndex(l.Instance.Config); usernetIndex != -1 {
 		client := usernet.NewClientByName(l.Instance.Config.Networks[usernetIndex].Lima)
-		err := client.UnExposeSSH(l.SSHLocalPort)
-		if err != nil {
-			logrus.Warnf("Failed to remove SSH binding for port %d", l.SSHLocalPort)
+		if err := client.UnExposeSSH(); err != nil {
+			logrus.Warn("Failed to remove SSH binding")
 		}
 	}
 	qmpSockPath := filepath.Join(l.Instance.Dir, filenames.QMPSock)

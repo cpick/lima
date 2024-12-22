@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -19,16 +20,17 @@ import (
 	"github.com/lima-vm/lima/pkg/httpclientutil"
 	"github.com/lima-vm/lima/pkg/limayaml"
 	"github.com/lima-vm/lima/pkg/networks/usernet/dnshosts"
+	"github.com/sirupsen/logrus"
 )
 
 type Client struct {
 	Directory string
 
-	client         *http.Client
-	delegate       *gvproxyclient.Client
-	base           string
-	subnet         net.IP
-	sshUnexposable bool
+	client      *http.Client
+	delegate    *gvproxyclient.Client
+	base        string
+	subnet      net.IP
+	unExposeSSH *types.UnexposeRequest
 }
 
 func (c *Client) ConfigureDriver(ctx context.Context, driver *driver.BaseDriver) error {
@@ -54,14 +56,17 @@ func (c *Client) ConfigureDriver(ctx context.Context, driver *driver.BaseDriver)
 	return err
 }
 
-func (c *Client) UnExposeSSH(sshPort int) error {
-	if !c.sshUnexposable {
-		return nil
+func (c *Client) UnExposeSSH() error {
+	if c.unExposeSSH == nil {
+		return errors.New("SSH not exposed")
 	}
-	return c.delegate.Unexpose(&types.UnexposeRequest{
-		Local:    fmt.Sprintf("127.0.0.1:%d", sshPort),
-		Protocol: "tcp",
-	})
+
+	if err := c.delegate.Unexpose(c.unExposeSSH); err != nil {
+		return err
+	}
+	c.unExposeSSH = nil
+
+	return nil
 }
 
 func (c *Client) AddDNSHosts(hosts map[string]string) error {
@@ -77,21 +82,39 @@ func (c *Client) AddDNSHosts(hosts map[string]string) error {
 }
 
 func (c *Client) ResolveAndForwardSSH(ipAddr string, sshPort int) error {
-	err := c.delegate.Expose(&types.ExposeRequest{
+	if c.unExposeSSH != nil {
+		return errors.New("SSH already exposed")
+	}
+
+	req := &types.ExposeRequest{
 		Local:    fmt.Sprintf("127.0.0.1:%d", sshPort),
 		Remote:   fmt.Sprintf("%s:22", ipAddr),
 		Protocol: "tcp",
-	})
+	}
+
+	err := c.delegate.Expose(req)
 	if err != nil {
 		return err
 	}
 
-	c.sshUnexposable = true
+	c.unExposeSSH = &types.UnexposeRequest{
+		Local:    req.Local,
+		Protocol: req.Protocol,
+	}
 	return nil
 }
 
 func (c *Client) forwardListenerToSSH(remote string, l net.Listener) error {
 	defer l.Close()
+
+	if c.unExposeSSH != nil {
+		return errors.New("SSH already exposed")
+	}
+
+	existingFwds, err := c.delegate.List()
+	if err != nil {
+		return fmt.Errorf("failed to get list existing forwards: %w", err)
+	}
 
 	tl, ok := l.(*net.TCPListener)
 	if !ok {
@@ -126,12 +149,94 @@ func (c *Client) forwardListenerToSSH(remote string, l net.Listener) error {
 		return innerErr
 	}
 
+	currentFwds, err := c.delegate.List()
+	if err != nil {
+		return fmt.Errorf("failed to get list current forwards: %w", err)
+	}
+
+	// save unexpose request based on new forward
+	var newFwd *types.ExposeRequest
+	for _, fwd := range currentFwds {
+		if len(existingFwds) == 0 || fwd != existingFwds[0] {
+			if newFwd != nil {
+				return fmt.Errorf("found multiple new forwards: %v and %v", newFwd, fwd)
+			}
+			newFwd = &fwd
+			continue // don't break to ensure there's only one new forward
+		}
+		existingFwds = existingFwds[1:]
+	}
+	if newFwd == nil {
+		return errors.New("failed to find new forward")
+	}
+	c.unExposeSSH = &types.UnexposeRequest{
+		Local:    newFwd.Local,
+		Protocol: newFwd.Protocol,
+	}
 	return nil
+}
+
+// wait for VM to start accepting connections on its SSH port
+func (c *Client) awaitSSHViaForward(remote string) error {
+	// overall timeout/deadline
+	t := 60 * time.Second
+	dlt := time.After(t)
+	dl := time.Now().Add(t)
+
+	// test listener
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("test socket failed to listen: %w", err)
+	}
+	addr := l.Addr()
+
+	if err := c.forwardListenerToSSH(remote, l); err != nil {
+		return fmt.Errorf("failed to forward test socket to SSH: %w", err)
+	}
+	defer c.UnExposeSSH()
+
+	// await SSH
+	d := net.Dialer{
+		Deadline: dl,
+	}
+	rlt := time.Tick(time.Second)
+	for {
+		conn, err := d.Dial(addr.Network(), addr.String())
+		if err != nil {
+			return fmt.Errorf("failed to set dial: %w", err)
+		}
+		defer conn.Close()
+
+		if err := conn.SetDeadline(dl); err != nil {
+			return fmt.Errorf("failed to set connection deadline: %w", err)
+		}
+
+		// test a read
+		if _, err := conn.Read([]byte{0}); err == nil {
+			return nil
+		} else if !errors.Is(err, io.EOF) {
+			return fmt.Errorf("failed to read from connection: %w", err)
+		}
+
+		// rate limit
+		select {
+		case <-dlt:
+			return fmt.Errorf("failed while rate limited: %w", os.ErrDeadlineExceeded)
+		case <-rlt: // carry on
+		}
+	}
 }
 
 func (c *Client) forwardLaunchdToSSH(ipAddr string, sshLaunchdSocketName string) error {
 	remote := net.JoinHostPort(ipAddr, "22")
 
+	// wait for SSH in VM to ensure that the first launchd connection succeeds
+	if err := c.awaitSSHViaForward(remote); err != nil {
+		logrus.Warnf("failed to await SSH via forward; first connection may fail, but continuing anyway: %w", err)
+		// carry on
+	}
+
+	// forward the launchd socket
 	l, err := launchd.Activate(sshLaunchdSocketName)
 	if err != nil {
 		return fmt.Errorf("launchd socket %q failed to activate: %w", sshLaunchdSocketName, err)
